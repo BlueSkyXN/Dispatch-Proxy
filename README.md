@@ -17,10 +17,10 @@
 
 ## 测试环境
 
-Windows 11 Pro 23H2
-``alexkirsz/dispatc`` [v0.1.3](https://github.com/alexkirsz/dispatch/releases/tag/v0.1.3)
-``V2rayN`` [v6.4.3](https://github.com/2dust/v2rayN/releases/tag/6.43)
-``Netch`` [v1.8.1](https://github.com/netchx/netch/releases/tag/1.8.1)
+- Windows 11 Pro 23H2
+- ``alexkirsz/dispatc`` [v0.1.3](https://github.com/alexkirsz/dispatch/releases/tag/v0.1.3)
+- ``V2rayN`` [v6.4.3](https://github.com/2dust/v2rayN/releases/tag/6.43)
+- ``Netch`` [v1.8.1](https://github.com/netchx/netch/releases/tag/1.8.1)
 
 ## 测试效果
 在同路由器下，通过WindowsPro策略组同时接入Wi-Fi（802.11ax 2.4Gbps 5Ghz）和以太网（2.5G LAN）网线，IP分别是``192.168.110.2``和``192.168.110.1``
@@ -39,7 +39,7 @@ Windows 11 Pro 23H2
 - Dispatch自行选择端口和可用的本地IP，作为上联源，以及配置权重，默认是均等连接，然后默认端口是1080，不可冲突端口
 
 ### 预测可用场景
-- 实现高速内网：叠加WiFi+LAN达到更大的理论速度，不影响互联网出口IP。
+- 实现高速内网：叠加WiFi+LAN等组合方案达到更大的理论速度，不影响互联网出口IP。
 - 叠加光猫LAN口：常见的光猫通常为1Gbps LAN接口，可通过叠加多个G口或者光猫自带WiFi实现更大带宽接入，获取被G口限制的冗余带宽，不影响互联网出口IP。
 - 多宽带/外网并联：叠加蜂窝流量卡（蜂窝网络类，包括MIFI/手机热点）实现更大带宽的外网上下行水平，但是这会导致出口IP不一致的问题，可能有负面影响。
 
