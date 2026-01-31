@@ -1,6 +1,7 @@
 use std::{
     fmt::Debug,
     net::{IpAddr, SocketAddr},
+    sync::Arc,
 };
 
 use color_eyre::owo_colors::OwoColorize;
@@ -8,6 +9,7 @@ use eyre::Result;
 use tokio::{
     io::{AsyncRead, AsyncWrite},
     net::{TcpListener, TcpStream},
+    sync::Semaphore,
 };
 use tracing::instrument;
 
@@ -38,10 +40,10 @@ where
 
     let local_addr = match socket.peer_addr() {
         Ok(local_addr) => local_addr,
-        Err(err) => match err.raw_os_error() {
+        Err(err) => match err.kind() {
             // InvalidInput: Invalid argument
             // Occurs if the socket was closed in the time it took us to get to this point.
-            Some(22) => return Ok(()),
+            std::io::ErrorKind::InvalidInput => return Ok(()),
             _ => return Err(err.into()),
         },
     };
@@ -73,11 +75,11 @@ where
     W: AsyncWrite + Unpin,
 {
     if let Err(err) = tokio::io::copy(&mut reader, &mut writer).await {
-        match err.raw_os_error() {
-            // Connection reset by peer (os error 54)
-            // TODO: we currently don't have a way to propagate this error in either direction, so instead we act as if
+        match err.kind() {
+            // Connection reset by peer
+            // We currently don't have a way to propagate this error in either direction, so instead we act as if
             // the stream ended gracefully (EOF).
-            Some(54) => Ok(()),
+            std::io::ErrorKind::ConnectionReset => Ok(()),
             _ => Err(eyre::eyre!(err)),
         }
     } else {
@@ -112,6 +114,30 @@ where
 async fn start_server(addr: SocketAddr, addresses: Vec<WeightedAddress>) -> Result<()> {
     let listener = TcpListener::bind(addr).await?;
 
+    // Security warning for non-localhost binding
+    if !addr.ip().is_loopback() {
+        use owo_colors::OwoColorize;
+        eprintln!(
+            "{} {}",
+            "⚠ WARNING:".yellow().bold(),
+            format!(
+                "The proxy is bound to {} which is accessible from other machines on your network.",
+                addr.ip()
+            )
+            .yellow()
+        );
+        eprintln!(
+            "{}",
+            "  This proxy does not require authentication and anyone who can reach this address can use it."
+                .yellow()
+        );
+        eprintln!(
+            "{}",
+            "  Consider binding to 127.0.0.1 (localhost) unless you specifically need external access.\n"
+                .yellow()
+        );
+    }
+
     println!("SOCKS proxy started on {}", addr.bold());
     println!(
         "Dispatching to {} {}",
@@ -128,11 +154,29 @@ async fn start_server(addr: SocketAddr, addresses: Vec<WeightedAddress>) -> Resu
     );
 
     let dispatcher = WeightedRoundRobinDispatcher::new(addresses);
+    
+    // Connection limiting: Allow up to 1000 concurrent connections to prevent DoS
+    // This is a reasonable default that can handle many simultaneous connections
+    // while preventing resource exhaustion
+    let connection_semaphore = Arc::new(Semaphore::new(1000));
 
     loop {
         let (socket, _) = listener.accept().await?;
         let dispatcher = dispatcher.clone();
+        
+        // Try to acquire a connection permit. If this fails (e.g., semaphore closed), 
+        // we skip this connection rather than panicking.
+        let permit = match connection_semaphore.clone().acquire_owned().await {
+            Ok(permit) => permit,
+            Err(_) => {
+                tracing::error!("Failed to acquire connection permit, semaphore may be closed");
+                continue;
+            }
+        };
+        
         tokio::spawn(async move {
+            // The permit will be automatically released when this task completes
+            let _permit = permit;
             if let Err(err) = handle_socket(socket, dispatcher).await {
                 // Errors that happen during the handling of a socket are only reported as warnings, since they're
                 // considered to be recoverable. On the other hand, panics are unrecoverable and are reported as errors.
