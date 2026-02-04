@@ -37,9 +37,11 @@ fn assert_supports_noauth(handshake: &SocksV5Handshake) -> Result<()> {
 
 #[instrument]
 fn try_bind_socket(addr: IpAddr) -> Result<TcpSocket> {
-    bind_socket(addr).map_err(|err| match err.raw_os_error() {
-        // Can't assign requested address
-        Some(49) => eyre::eyre!(err).wrap_err(unaccessible_local_address_error(&addr)),
+    bind_socket(addr).map_err(|err| match err.kind() {
+        // Can't assign requested address - happens when the address doesn't exist on this machine
+        std::io::ErrorKind::AddrNotAvailable => {
+            eyre::eyre!(err).wrap_err(unaccessible_local_address_error(&addr))
+        }
         _ => eyre::eyre!(err),
     })
 }
@@ -230,18 +232,24 @@ where
                 Ok(server_stream)
             }
             Err(err) => {
-                // Unix error codes.
-                // TODO: handle Windows error codes.
-                let status = match err.raw_os_error() {
-                    // ENETUNREACH
-                    Some(101) => socksv5::v5::SocksV5RequestStatus::NetworkUnreachable,
-                    // ETIMEDOUT
-                    Some(110) => socksv5::v5::SocksV5RequestStatus::TtlExpired,
-                    // ECONNREFUSED
-                    Some(111) => socksv5::v5::SocksV5RequestStatus::ConnectionRefused,
-                    // EHOSTUNREACH
-                    Some(113) => socksv5::v5::SocksV5RequestStatus::HostUnreachable,
-                    // Unhandled error code
+                // Map common error kinds to SOCKS5 status codes
+                // This is now platform-independent using ErrorKind instead of raw OS error codes
+                let status = match err.kind() {
+                    // Network unreachable
+                    std::io::ErrorKind::NetworkUnreachable => {
+                        socksv5::v5::SocksV5RequestStatus::NetworkUnreachable
+                    }
+                    // Connection timed out
+                    std::io::ErrorKind::TimedOut => socksv5::v5::SocksV5RequestStatus::TtlExpired,
+                    // Connection refused
+                    std::io::ErrorKind::ConnectionRefused => {
+                        socksv5::v5::SocksV5RequestStatus::ConnectionRefused
+                    }
+                    // Host unreachable (or other errors that suggest host issues)
+                    std::io::ErrorKind::HostUnreachable => {
+                        socksv5::v5::SocksV5RequestStatus::HostUnreachable
+                    }
+                    // Unhandled error kinds
                     _ => socksv5::v5::SocksV5RequestStatus::ServerFailure,
                 };
                 socksv5::v5::write_request_status(
@@ -353,7 +361,7 @@ fn unsupported_v4_command_error(cmd: &SocksV4Command) -> Report {
 }
 
 fn unsupported_v5_command_error(cmd: &SocksV5Command) -> Report {
-    eyre::eyre!("Unsupported SOCKSv4 proxy command `{:?}`", cmd)
+    eyre::eyre!("Unsupported SOCKSv5 proxy command `{:?}`", cmd)
 }
 
 fn unaccessible_local_address_error(addr: &IpAddr) -> Report {
